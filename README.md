@@ -225,6 +225,18 @@ paths, copied on selection, with the ones that write to Jira marked in red. A
 page cannot run a program, so handing you the exact command is the honest
 maximum; `--serve` is there for when you want the buttons to be real.
 
+## Contributing
+
+Issues and pull requests welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Two things worth knowing before you start: **no third-party dependencies** is a
+hard rule, not a preference, and a change that makes the tool log *more* time
+needs to argue for itself. Both are explained there, along with the handful of
+issues that are deliberately left open.
+
+Reports from macOS and Linux would be especially useful — nothing here is
+Windows-specific, but only Windows has been exercised end to end.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
@@ -237,3 +249,4 @@ MIT — see [LICENSE](LICENSE).
 | [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md) | Changing it: architecture, state files, queue schema, retry model |
 | [.agents/AGENTS.md](.agents/AGENTS.md) | Working on it: branching, PRs, ticket status, secrets, checklists |
 | [docs/DEVELOPMENT_NARRATIVE.md](docs/DEVELOPMENT_NARRATIVE.md) | Why it looks like this: the bugs that shaped it, and what a mock could not catch |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing: the no-dependencies rule, what a good test looks like, what is deliberately open |
