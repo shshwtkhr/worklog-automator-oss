@@ -127,7 +127,7 @@ class Jira:
             "Authorization": self.auth,
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "User-Agent": f"claude-worklog/{VERSION}",
+            "User-Agent": f"worklog-automator/{VERSION}",
         })
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:

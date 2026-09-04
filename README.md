@@ -265,7 +265,7 @@ a sprint.
 Four suites, no third-party runner, no network, no Jira account.
 `tests/mock_jira.py` is a scriptable stand-in for Jira's REST v3 worklog API.
 
-    python tests/test_post.py                 # posting, retry, duplicate adoption (23)
+    python tests/test_post.py                 # posting, retry, duplicate adoption (24)
     python tests/test_worklog.py              # project mapping commands (12)
     python tests/test_session_lifecycle.py    # what each session end does to the clock (8)
     python tests/test_dashboard.py            # the generated page (6)

@@ -430,6 +430,14 @@ Both installers only strip their *own* previous handlers, so they coexist on
 
 ---
 
+### How it identifies itself
+
+Every request carries `User-Agent: worklog-automator/<VERSION>`. That is what a
+Jira administrator sees in an audit log when they ask what has been writing
+worklogs, so it names the tool and its version rather than a generic Python
+default. `test_identifies_itself_on_the_wire` pins it — a rename that changed it
+silently would leave old and new versions indistinguishable in an audit trail.
+
 ## 8. Error handling philosophy
 
 **Hooks must never break the session.** Every entry point swallows exceptions,
@@ -446,7 +454,7 @@ normally otherwise.
 
 | Suite | Covers |
 |---|---|
-| `tests/test_post.py` | 23 cases against `tests/mock_jira.py` |
+| `tests/test_post.py` | 24 cases against `tests/mock_jira.py` |
 | `tests/test_worklog.py` | 12 cases for `map` / `unmap` |
 | `tests/test_session_lifecycle.py` | 8 cases pinning what each session-end route does to the clock |
 | `tests/test_dashboard.py` | 6 cases for the generated page |

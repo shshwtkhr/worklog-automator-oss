@@ -251,6 +251,24 @@ def test_happy_path_posts_and_archives(h: Harness):
 
 
 @case
+def test_identifies_itself_on_the_wire(h: Harness):
+    """The User-Agent is what a Jira admin sees in an audit log when they ask
+    what has been writing worklogs. Nothing pinned it before, so a rename could
+    change it silently."""
+    import post as postmod
+    h.start({"post_worklog": {"mode": "ok"}})
+    h.seed(h.entry())
+    result = h.run("run")
+    expect_eq(result.returncode, 0, f"run should succeed: {result.stderr}")
+
+    agent = h.requests("POST", "/worklog")[0]["user_agent"]
+    expect_eq(agent, f"worklog-automator/{postmod.VERSION}",
+              "the tool must name itself and its version on every request")
+    expect("claude-worklog" not in agent,
+           "the old identifier must not survive a rename")
+
+
+@case
 def test_401_on_post_blocks_without_retry(h: Harness):
     """Bad credentials are permanent. The entry must park as blocked, keep its
     time, and never schedule a retry."""

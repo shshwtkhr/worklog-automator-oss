@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-claude-worklog -- session time capture for Claude Code.
+worklog-automator -- session time capture for Claude Code.
 
 Implements PROJ-66: resolve a project directory to a Jira issue key, detect
 session boundaries, accumulate active time, and write a rounded worklog record
@@ -618,7 +618,7 @@ def read_queue() -> list[dict]:
 def cmd_status(argv: list[str]) -> int:
     cfg = load_config()
     ensure_dirs()
-    print(f"claude-worklog {VERSION}   state: {state_dir()}")
+    print(f"worklog-automator {VERSION}   state: {state_dir()}")
 
     live = sorted(sessions_dir().glob("*.json"))
     print(f"\nActive sessions ({len(live)}):")
