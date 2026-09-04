@@ -1,49 +1,164 @@
-# claude-worklog
+# worklog-automator
 
-Automatic worklog capture from Claude Code into Jira, so time reaches the board
-without anyone typing it in. Implements **PROJ-62**.
+**Your Jira board says the work took four hours. It took nine. Nobody logged the
+other five.**
 
-| Script | Ticket | Does |
-|---|---|---|
-| `worklog.py` | PROJ-66 | Hooks accumulate *active* session time per Jira issue into a local queue |
-| `post.py` | PROJ-67 | Drains that queue into Jira's worklog API, with backoff and duplicate adoption |
-| `dashboard.py` | — | Writes a static HTML view of everything above. No server. |
+This fixes that, by never asking you to log anything.
 
-Standard library only, **no third-party dependencies**. Python 3.8+; developed
-and exercised end to end on 3.14 / Windows 11.
+---
 
-Planyway has no API of its own — it renders native Jira time tracking, and
-`adjustEstimate=auto` on the worklog POST is what moves its timeline.
+## The problem
 
-## See it
+Manual time tracking fails in a specific, predictable way.
+
+You finish a task, you mean to log it, and you don't. A day later you log
+something — a round number, remembered generously, and rounded up because that
+feels fair. Multiply that across a board and estimates stop meaning anything:
+every ticket looks like it took the time it was estimated to take, because the
+estimate is what got typed in.
+
+The usual fixes make it worse. A timer you have to start is one more thing to
+forget. A tool that logs wall-clock time bills you for lunch. A tool that rounds
+to the nearest half hour invents time nobody worked, which is the same disease
+with better manners.
+
+## The solution
+
+Claude Code already fires hooks when a session starts, when you send a message,
+on every tool call, and when the session ends. That is enough to measure how long
+you were *actually working* — and to attribute it, because the working directory
+identifies the project, and the project maps to a Jira issue.
+
+So: no timer to start, no form to fill in, and no number invented on your behalf.
 
 ![The dashboard: every tab, the command picker, then dark mode](docs/dashboard.gif)
 
-`python dashboard.py --open` writes that page — one self-contained HTML file,
-no server, no CDN, works offline. It shows where every minute is: on the clock,
-carried under the minimum, queued, or in Jira.
+Planyway needs no integration — it has no API and no custom fields, it renders
+native Jira time tracking. A standard worklog with `adjustEstimate=auto` is what
+moves its timeline.
 
-## Install
+---
+
+## How it works
+
+Three scripts, standard library only, **no third-party dependencies**.
+
+| Script | Does |
+|---|---|
+| **`worklog.py`** | Hooks accumulate *active* session time per Jira issue into a local queue |
+| **`post.py`** | Drains that queue into Jira, with backoff and duplicate protection |
+| **`dashboard.py`** | Writes a static HTML page showing where every minute is |
+
+Time moves through four stages, and nothing advances on its own except by the
+rule stated beside it:
+
+| Stage | Moves on |
+|---|---|
+| **On the clock** | Gaps between hook events, counted only when under 15 minutes |
+| **Carried** | A session under 5 minutes is held, not dropped, and added to the next one on that issue |
+| **Queued** | Written at session end, floored to 5 minutes. Never rounded up |
+| **In Jira** | Drained on the next `SessionStart`. One drain at a time |
+
+The two halves are separate processes with a file between them. `SessionEnd` has
+a short budget in Claude Code, so the hook path does local file I/O only — no
+network, no `gh`, no git call that can hang. Everything that can block happens
+later, in `post.py`, where it is allowed to fail and retry.
+
+---
+
+## Quick start
 
 ```bash
 python worklog.py install           # session hooks -> ~/.claude/settings.json
 python post.py install-hook         # drain the queue on every SessionStart
-python worklog.py map C:\Projects\example-app PROJ-22 userx/example-app
 ```
 
-Then put `base_url`, `email` and an API token in
-`~/.claude/worklog/credentials.json` (**UTF-8 without BOM** — see
-[docs/USER_MANUAL.md](docs/USER_MANUAL.md)), and check with:
+Put your Jira details in `~/.claude/worklog/credentials.json`:
+
+```json
+{
+  "base_url": "https://your-site.atlassian.net",
+  "email": "you@example.com",
+  "api_token": "..."
+}
+```
+
+The token comes from
+[id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
+— it is not your password. **Save the file as UTF-8 without a BOM**; PowerShell's
+`Set-Content -Encoding utf8` adds one, and the result reports as *missing
+credentials* rather than as a malformed file.
+
+Map each project, then restart Claude Code:
 
 ```bash
-python worklog.py doctor
-python post.py check
+python worklog.py map C:\Projects\example-app PROJ-22 userx/example-app
+python worklog.py doctor            # everything should say ok
+python post.py check                # verifies credentials, read-only
 ```
 
-Install merges into an existing `settings.json` — it preserves your other hooks,
-and re-running it replaces its own entries rather than duplicating them.
-`worklog.py` and `post.py` each strip only their own handlers, so they coexist on
-`SessionStart`.
+That is the whole setup. Work normally.
+
+---
+
+## What gets logged — and what does not
+
+The single rule everything else follows: **never over-report.** Every decision
+below loses a little real time on purpose, because a timesheet that overstates is
+worse than one that understates.
+
+- **Active time, not elapsed time.** Only gaps between hook events under
+  `idle_timeout_minutes` count. A longer gap contributes **nothing** — the whole
+  gap is discarded, not just the excess.
+- **Rounding floors.** 39 minutes logs 35. The remaining 4 is not thrown away; it
+  carries to your next session on that issue.
+- **Short sessions carry rather than post.** Five 3-minute sessions become one
+  15-minute worklog instead of five noisy entries — or, worse, nothing.
+- **Under 30 seconds of activity produces nothing at all.** Opening a folder to
+  check something is not work.
+
+This is why the numbers look lower than your day felt. That is the design, not a
+defect.
+
+### Nothing is ever silently dropped
+
+If time is not on the board it is in one of four places, and
+`python dashboard.py --open` shows all four at once:
+
+1. **Posted** to Jira
+2. **Queued** — Jira was unreachable, or the entry is not due for a retry yet
+3. **Carried** — the session was under the minimum
+4. **In `unmapped.jsonl`** — the folder resolves to no issue, so nothing was sent
+
+That last file doubles as a ranked list of which folders are earning enough time
+to deserve a ticket.
+
+---
+
+## How a directory becomes an issue key
+
+Checked in order, first hit wins:
+
+1. `CLAUDE_WORKLOG_ISSUE` — a per-shell override
+2. A **`.jira-project`** file, walking *up* from the working directory
+3. The **`projects`** map in `~/.claude/worklog/config.json`, longest path prefix wins
+
+`.jira-project` accepts a bare key or key–value lines:
+
+```
+issue_key: PROJ-22
+github: userx/example-app
+```
+
+**Two things that surprise people.** Subdirectories are included, which is
+usually what you want. And the search goes *upward* — a marker at
+`C:\Projects\` would capture every project beneath it, so map the individual
+project folders rather than the folder containing them.
+
+A marker **beats** the central map, so `unmap` alone will not stop tracking a
+directory that has one. `unmap` says so when that is the case.
+
+---
 
 ## Commands
 
@@ -57,18 +172,18 @@ and re-running it replaces its own entries rather than duplicating them.
 | `resolve [path]` | Explain how a path maps to an issue key |
 | `map <path> <KEY> [gh-slug]` | Add a directory mapping |
 | `unmap <path>` | Remove one; warns if a `.jira-project` marker still captures it |
-| `doctor` | Verify hooks, config, and mapped paths |
+| `doctor` | Verify hooks, config and runtime |
 
 ### `post.py` — send
 
 | Command | What it does |
 | :-- | :-- |
-| `install-hook` | Drain the queue on every SessionStart |
+| `install-hook` | Drain the queue on every `SessionStart` |
 | `check` | Verify credentials and that queued issues are reachable. Read-only. |
 | `run --dry-run` | Show exactly what would be posted. **Do this first.** |
 | `run [--limit N] [--force]` | **Posts real worklogs to real Jira.** |
 | `status` | Queue health, blocked entries and why |
-| `retry <id\|all>` | Clear backoff / unblock and try again |
+| `retry <id\|all>` | Clear backoff, unblock, and try again |
 
 ### `dashboard.py` — see
 
@@ -79,131 +194,76 @@ and re-running it replaces its own entries rather than duplicating them.
 | `--watch [seconds]` | Regenerate on a timer |
 | `--serve [port]` | Serve on `127.0.0.1` so the page's Refresh button really works |
 
-The GIF above is regenerated by `tools/make_demo_gif.py` — headless Chromium for
-the frames, then a pure standard-library PNG reader, median-cut quantiser and
-GIF89a/LZW writer. No Pillow, no ffmpeg, no `node_modules`.
+---
 
-## How a directory becomes an issue key
+## When something goes wrong
 
-Checked in order, first hit wins:
+**An entry says `blocked`.** That means retrying would not help, so it stopped on
+purpose. `python post.py status` says why — usually a bad token (401), no
+permission to log work (403), or a typo'd issue key (404). Fix the cause, then
+`post.py retry all`. Nothing is lost while an entry is blocked; it waits.
 
-1. `CLAUDE_WORKLOG_ISSUE` environment variable — per-shell override
-2. A `.jira-project` file, walking up from `cwd` to the filesystem root
-3. The `projects` map in `~/.claude/worklog/config.json`, longest path prefix wins
+**An entry says `failed`.** A temporary problem. It backs off — one minute, five,
+fifteen, an hour, then longer — for about a day before giving up and blocking.
+You need do nothing. `post.py run --force` tries immediately.
 
-`.jira-project` accepts a bare key or key–value lines:
+**Nothing is being recorded.** In order: `worklog.py doctor` (are the hooks
+installed?), did you restart Claude Code, `worklog.py resolve <folder>` (does it
+find a ticket?), and was the session longer than 30 seconds?
 
-```
-issue_key: PROJ-22
-github: userx/example-app
-```
+Deeper troubleshooting is in [docs/USER_MANUAL.md](docs/USER_MANUAL.md).
 
-Unresolved sessions are **not discarded** — they land in `unmapped.jsonl` with the
-path and a ready-to-run `map` command, and `status` shows the count.
+---
 
-## The five decisions PROJ-66 asked for
+## Design decisions worth knowing
 
-**Session boundaries.** `SessionStart` opens a record, `SessionEnd` closes it.
-`UserPromptSubmit`, `PostToolUse` and `Stop` act as heartbeats in between.
+**A timeout on a POST says nothing about the server.** The request may have
+landed. So any entry that has been attempted before is checked against Jira and
+an existing match is *adopted* rather than duplicated — and a duplicate check
+that itself fails parks the entry instead of posting, because "I checked and it
+is not there" and "I could not check" must not collapse into the same answer.
 
-**Active time, not wall-clock.** A session left open overnight would log 14 hours.
-Only the gap between successive heartbeats is counted, and only when it is under
-`idle_timeout_minutes` (default 15). Longer gaps count as zero and increment
-`idle_drops`. A long autonomous agent run keeps its time because `PostToolUse`
-fires throughout.
+**Only one drain runs at a time.** Reopening the app starts several sessions at
+once and every `SessionStart` fires the drain hook. Without a lock, each process
+reads the same pending entry and posts it.
 
-**Minimum loggable duration: 5 minutes** — but short sessions are carried, not
-dropped. Time below the minimum accumulates per issue in `carry.json`, so four
-3-minute sessions become one 10-minute worklog plus 2 minutes still carried,
-instead of four noise entries or nine lost minutes.
+**A killed terminal fires no hook at all.** `SessionStart` sweeps sessions whose
+last heartbeat is older than `stale_session_hours` and finalises them against
+their original start time, so the time still lands on the right day.
 
-**Rounding: floor to 5 minutes**, remainder carried forward. Rounding to *nearest*
-would invent time that was never worked, which is worse than being slightly
-behind — and the carry means nothing is lost either way. Verified across 30
-randomised sessions: logged + carried equals worked exactly, and logged never
-exceeds worked.
+**Hooks never break a session.** Every entry point swallows exceptions, logs to
+`worklog.log`, and exits 0. Nothing prints to stdout, because Claude Code injects
+`SessionStart` and `UserPromptSubmit` stdout into the model's context.
 
-**Noise floor: 30 seconds.** Below that, a session is not even carried.
+**No dependencies, deliberately.** A hook that fails because a virtualenv moved
+is a hook that silently stops recording your time, and you find out at the end of
+a sprint.
 
-## Crash safety
+---
 
-`SessionEnd` does not fire when a terminal is killed. Every `SessionStart` sweeps
-sessions whose last heartbeat is older than `stale_session_hours` (default 12) and
-finalises them against their original start timestamp, so the time still lands on
-the right day. Git context is skipped for swept sessions since the branch may have
-moved on.
+## What it does not do
 
-`SessionEnd` hooks share a 1.5-second budget in Claude Code, so finalisation does
-local file I/O only — no network, no `gh`, no unbounded git calls. The installed
-hook sets `timeout: 10`, which raises that budget. Heartbeat hooks run with
-`async: true` so they never block a tool call.
+- It does not watch you. It notices that a session was active, and only in
+  folders you explicitly mapped.
+- It does not send your paths, file contents or prompts anywhere. What reaches
+  Jira is an issue key, a duration, a start time, and a comment naming the repo,
+  branch and up to three commit subjects.
+- It does not honour Jira's `Retry-After` on a 429 — it uses its own backoff
+  ladder, so a server asking for 120s is retried at 60.
+- A **resumed** session produces two worklogs rather than one, because
+  `end_session` finalises on every reason. Pinned by a test, so changing it is a
+  deliberate change.
+- Live rate-limiting is mock-only; Atlassian cannot be made to 429 on demand.
+- Only Windows 11 with Python 3.14 has been exercised end to end. Nothing is
+  Windows-specific — the file locking deliberately avoids `fcntl` — but that is
+  the only platform actually proven.
 
-Hooks never print to stdout: Claude Code injects `SessionStart` and
-`UserPromptSubmit` stdout into the model's context. All errors are swallowed,
-logged to `worklog.log`, and exit 0 — a broken tracker must never break a session.
-
-## The queue entry — the contract between the halves
-
-`~/.claude/worklog/queue.jsonl`, one JSON object per line:
-
-```json
-{
-  "id": "b1fc6ec35d384eecb6b71dbc9df593d5",
-  "issue_key": "PROJ-22",
-  "time_spent_seconds": 900,
-  "started": "2026-09-03T14:05:00.000+0530",
-  "comment": "userx/example-app#42 | 1 commit: a1ef548 fix scoring edge case | logged automatically from Claude Code",
-  "comment_parts": {
-    "repo": "example-app",
-    "branch": "42-fix-scoring",
-    "github_repo": "userx/example-app",
-    "github_issue": 42,
-    "commits": ["a1ef548 fix scoring edge case"],
-    "carried_seconds": 0.0,
-    "session_seconds": 900.1,
-    "idle_drops": 1,
-    "end_reason": "prompt_input_exit"
-  },
-  "session_id": "sess-abc123",
-  "created": "2026-09-03T14:20:00.123456+05:30",
-  "status": "pending"
-}
-```
-
-`issue_key`, `time_spent_seconds`, `started` and `comment` map straight onto
-`POST /rest/api/3/issue/{key}/worklog`. The `started` format is the one Jira
-insists on — milliseconds present, no colon in the offset.
-
-Two things `post.py` owns, deliberately kept out of the hook path:
-
-- **GitHub issue titles.** PROJ-62 wants the number *and* title in the comment.
-  The number is captured at session end from the branch name; resolving the title
-  needs a `gh` call that `SessionEnd` cannot afford. `post.py` looks it up at post
-  time, caches it, and calls `worklog.render_comment(parts, github_title=...)` —
-  so the format stays defined in one place.
-- **Queue lifecycle.** `worklog.py` only ever appends `pending` entries.
-  `post.py` moves them to `posted`, `failed` or `blocked`, archives what lands in
-  `posted.jsonl`, and holds an exclusive lock for the whole drain so concurrent
-  SessionStart hooks cannot post the same entry twice.
-
-## Not done here
-
-- No verification against the Planyway timeline (PROJ-65). The Jira side is
-  confirmed — `adjustEstimate=auto` moves `remainingEstimateSeconds` by exactly
-  the posted duration — but nobody has looked at what Planyway renders.
-- Windows 11 with Python 3.14 is the platform this has actually been exercised
-  on, end to end against real Jira. One Windows-specific trap: PowerShell 5.1
-  writes a BOM by default, and a `credentials.json` with one reports as *missing
-  credentials* rather than as a malformed file. See
-  [docs/USER_MANUAL.md](docs/USER_MANUAL.md)
-- Live rate-limiting (429) has only ever been exercised against the mock; a real
-  site cannot be made to 429 on demand
+---
 
 ## Tests
 
-Three standalone suites, no third-party dependencies, no network and no
-credentials needed. `tests/mock_jira.py` is a scriptable stand-in for Jira's
-REST v3 worklog API.
+Four suites, no third-party runner, no network, no Jira account.
+`tests/mock_jira.py` is a scriptable stand-in for Jira's REST v3 worklog API.
 
     python tests/test_post.py                 # posting, retry, duplicate adoption (23)
     python tests/test_worklog.py              # project mapping commands (12)
@@ -212,30 +272,18 @@ REST v3 worklog API.
 
 Pass a substring to filter: `python tests/test_post.py 429`.
 
-## Dashboard
-
-    python dashboard.py --open
-
-Writes a self-contained `index.html` (no server, no CDN, works offline) showing
-unposted time by stage, every project, live sessions, the queue, what has been
-posted, unmapped folders and hook/credential health.
-
-It also carries a **Command** picker — every useful command with real absolute
-paths, copied on selection, with the ones that write to Jira marked in red. A
-page cannot run a program, so handing you the exact command is the honest
-maximum; `--serve` is there for when you want the buttons to be real.
+---
 
 ## Contributing
 
 Issues and pull requests welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Two things worth knowing before you start: **no third-party dependencies** is a
-hard rule, not a preference, and a change that makes the tool log *more* time
-needs to argue for itself. Both are explained there, along with the handful of
-issues that are deliberately left open.
+hard rule rather than a preference, and a change that makes the tool log *more*
+time has to argue for itself. Both are explained there, along with the handful of
+issues left deliberately open.
 
-Reports from macOS and Linux would be especially useful — nothing here is
-Windows-specific, but only Windows has been exercised end to end.
+Reports from macOS and Linux would be especially useful.
 
 ## Licence
 
@@ -245,8 +293,12 @@ MIT — see [LICENSE](LICENSE).
 
 | Document | For |
 |---|---|
-| [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Using it: install, map projects, why numbers look low, troubleshooting |
-| [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md) | Changing it: architecture, state files, queue schema, retry model |
-| [.agents/AGENTS.md](.agents/AGENTS.md) | Working on it: branching, PRs, ticket status, secrets, checklists |
+| [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Using it: setup, mapping, why numbers look low, troubleshooting |
+| [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md) | Changing it: architecture, state files, the queue schema, the retry model |
 | [docs/DEVELOPMENT_NARRATIVE.md](docs/DEVELOPMENT_NARRATIVE.md) | Why it looks like this: the bugs that shaped it, and what a mock could not catch |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing: the no-dependencies rule, what a good test looks like, what is deliberately open |
+| [.agents/AGENTS.md](.agents/AGENTS.md) | Working on it: branching, PRs, ticket status, secrets, checklists |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing: the no-dependencies rule, what a good test looks like |
+
+`tools/make_demo_gif.py` regenerates the GIF above — headless Chromium for the
+frames, then a standard-library PNG reader, median-cut quantiser and GIF89a/LZW
+writer. No Pillow, no ffmpeg, no `node_modules`.
