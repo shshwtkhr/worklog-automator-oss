@@ -90,6 +90,68 @@ class Harness:
 # ---------------------------------------------------------------- the cases
 
 @case
+def test_map_adopts_a_running_unresolved_session(h: Harness):
+    """The reason the advice used to be "restart Claude Code". A session records
+    its issue key once, at SessionStart, so a mapping added later was invisible
+    to it -- and real work landed in unmapped.jsonl because the map arrived an
+    hour too late."""
+    project = h.project("late-mapped")
+    sessions = h.state / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    (sessions / "live1.json").write_text(json.dumps({
+        "session_id": "live1", "cwd": str(project), "project_root": str(project),
+        "issue_key": None, "issue_source": "unresolved",
+        "started": worklog.now().isoformat(),
+        "last_activity": worklog.now().isoformat(),
+        "active_seconds": 1727.0, "events": 96, "idle_drops": 0,
+    }), encoding="utf-8")
+
+    result = h.run("map", str(project), "PROJ-85")
+    expect_eq(result.returncode, 0, f"map should succeed: {result.stderr}")
+    expect("live1" in result.stdout and "PROJ-85" in result.stdout,
+           f"map should say which running session it rescued: {result.stdout!r}")
+    expect("no restart needed" in result.stdout,
+           "and should say a restart is not required, since it is not")
+
+    rec = json.loads((sessions / "live1.json").read_text(encoding="utf-8"))
+    expect_eq(rec["issue_key"], "PROJ-85", "the running session should adopt the mapping")
+    expect("adopted mid-session" in rec["issue_source"],
+           f"provenance should say it was adopted, not resolved at start: {rec['issue_source']!r}")
+    expect_eq(rec["active_seconds"], 1727.0, "accumulated time must not be disturbed")
+
+
+@case
+def test_map_never_reattributes_an_already_resolved_session(h: Harness):
+    """Adoption rescues unattributed time. Moving time that already has an
+    issue would silently shift hours between tickets."""
+    project = h.project("already-known")
+    sessions = h.state / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    (sessions / "live2.json").write_text(json.dumps({
+        "session_id": "live2", "cwd": str(project), "project_root": str(project),
+        "issue_key": "PROJ-1", "issue_source": "marker",
+        "started": worklog.now().isoformat(),
+        "last_activity": worklog.now().isoformat(),
+        "active_seconds": 600.0, "events": 12, "idle_drops": 0,
+    }), encoding="utf-8")
+
+    h.run("map", str(project), "PROJ-999")
+    rec = json.loads((sessions / "live2.json").read_text(encoding="utf-8"))
+    expect_eq(rec["issue_key"], "PROJ-1",
+              "a session that already has an issue must keep it")
+    expect_eq(rec["issue_source"], "marker", "and its provenance")
+
+
+@case
+def test_map_reports_nothing_when_no_session_needs_adopting(h: Harness):
+    project = h.project("quiet")
+    result = h.run("map", str(project), "PROJ-5")
+    expect_eq(result.returncode, 0, "map should succeed")
+    expect("no restart needed" not in result.stdout,
+           f"nothing was adopted, so nothing should be claimed: {result.stdout!r}")
+
+
+@case
 def test_unmap_removes_the_mapping(h: Harness):
     project = h.project("example-app")
     h.run("map", str(project), "PROJ-22", "userx/example-app")

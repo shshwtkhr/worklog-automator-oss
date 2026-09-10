@@ -445,6 +445,19 @@ def finalize_record(record: dict, cfg: dict, reason: str) -> dict | None:
         return None
 
     if not issue_key:
+        # The record froze whatever resolved at SessionStart. A mapping added
+        # since then was invisible to it, so ask again before giving up -- the
+        # alternative is real work landing in unmapped.jsonl because the map
+        # arrived an hour too late.
+        late = resolve_issue(cwd, cfg)
+        if late["issue_key"]:
+            issue_key = late["issue_key"]
+            record["issue_key"] = issue_key
+            record["issue_source"] = f"{late['source']} (resolved at session end)"
+            record.setdefault("github_repo", None)
+            record["github_repo"] = record["github_repo"] or late.get("github")
+
+    if not issue_key:
         append_jsonl(unmapped_path(), {
             "cwd": cwd,
             "project_root": record.get("project_root"),
@@ -703,6 +716,9 @@ def cmd_map(argv: list[str]) -> int:
     cfg["projects"][resolved] = entry
     save_config(cfg)
     print(f"mapped {resolved} -> {key}")
+    for session_id, adopted_key in adopt_live_sessions(cfg):
+        print(f"  live session {session_id[:8]} now logs to {adopted_key}"
+              f" -- no restart needed")
     return 0
 
 
@@ -714,6 +730,33 @@ def mapped_key(entry) -> str | None:
     if isinstance(entry, dict):
         return entry.get("issue_key")
     return None
+
+
+def adopt_live_sessions(cfg: dict) -> list[tuple[str, str]]:
+    """Give running sessions the benefit of a mapping just added.
+
+    A session records its issue key once, at SessionStart. Without this, adding
+    a mapping only takes effect for the *next* session -- which is why the
+    advice used to be "restart Claude Code". Nothing needs restarting; the
+    record just needs asking again.
+
+    Only sessions that are currently unresolved are touched. Re-attributing a
+    session that already has a key would silently move time between issues.
+    """
+    adopted = []
+    for path in sorted(sessions_dir().glob("*.json")):
+        record = read_json(path, None)
+        if not record or record.get("issue_key"):
+            continue
+        resolved = resolve_issue(record.get("cwd") or "", cfg)
+        if not resolved["issue_key"]:
+            continue
+        record["issue_key"] = resolved["issue_key"]
+        record["issue_source"] = f"{resolved['source']} (adopted mid-session)"
+        record["github_repo"] = record.get("github_repo") or resolved.get("github")
+        write_json_atomic(path, record)
+        adopted.append((str(record.get("session_id", path.stem)), resolved["issue_key"]))
+    return adopted
 
 
 def cmd_unmap(argv: list[str]) -> int:

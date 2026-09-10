@@ -232,6 +232,49 @@ def test_force_kill_same_day_resumes_the_same_record(w: World):
     expect_nothing_lost(w)
 
 
+@case
+def test_session_end_resolves_a_mapping_that_arrived_late(w: World):
+    """The safety net. Even with no `map` command run in between -- config edited
+    by hand, or another process -- time must not be filed as unmapped when the
+    directory resolves by the time the session ends."""
+    w.seed()
+    path = w.session_path()
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["issue_key"] = None                 # as if mapped after SessionStart
+    record["issue_source"] = "unresolved"
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    w.hook("session-end", reason="clear")
+
+    queued = w.queue()
+    expect_eq(len(queued), 1,
+              "the time should reach the queue, not unmapped.jsonl")
+    expect_eq(queued[0]["issue_key"], "PROJ-67",
+              "resolved from the directory at session end, from its .jira-project")
+    unmapped = w.state / "unmapped.jsonl"
+    expect(not unmapped.exists() or not unmapped.read_text(encoding="utf-8").strip(),
+           "nothing should have been filed as unmapped")
+
+
+@case
+def test_session_end_still_files_genuinely_unmapped_time(w: World):
+    """The net must not catch everything -- a directory that resolves to nothing
+    still belongs in unmapped.jsonl."""
+    w.seed()
+    (w.proj / ".jira-project").unlink()        # remove the only mapping
+    path = w.session_path()
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["issue_key"] = None
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    w.hook("session-end", reason="clear")
+
+    expect_eq(w.queue(), [], "nothing should be queued")
+    unmapped = w.state / "unmapped.jsonl"
+    expect(unmapped.exists() and unmapped.read_text(encoding="utf-8").strip(),
+           "it should be recorded as unmapped instead")
+
+
 # ------------------------------------------------------------------- invariant
 
 @case

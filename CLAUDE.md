@@ -39,8 +39,9 @@ Stated here as well as in `.agents/AGENTS.md` because breaking any of them puts 
 | [.agents/AGENTS.md](.agents/AGENTS.md) | **The rules.** Branching, PRs, ticket status, secrets, testing, docs, checklists |
 | [docs/USER_MANUAL.md](docs/USER_MANUAL.md) | Plain-English guide: install, map projects, what gets logged, troubleshooting |
 | [docs/TECHNICAL_DOCUMENTATION.md](docs/TECHNICAL_DOCUMENTATION.md) | Architecture, state files, queue schema, retry model, command reference |
-| [README.md](README.md) | Short overview and test instructions |
 | [docs/DEVELOPMENT_NARRATIVE.md](docs/DEVELOPMENT_NARRATIVE.md) | The incidents that shaped the design. Read before changing the retry or locking logic. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing: the no-dependencies rule, what a good test looks like |
+| [README.md](README.md) | Problem, solution, quick start, commands |
 
 ---
 

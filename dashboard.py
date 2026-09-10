@@ -256,7 +256,7 @@ def collect(output: Path | None = None) -> dict:
         "health": collect_health(cfg),
         "output_path": str((output or default_output()).resolve()),
         "regen_command": regen_command(output),
-        "commands": command_menu(output),
+        "commands": command_menu(output, pick_targets(sessions, unmapped_list, cfg)),
     }
 
 
@@ -806,9 +806,50 @@ def _q(path) -> str:
     return f'"{text}"' if " " in text else text
 
 
-def command_menu(output: Path | None) -> list[dict]:
+def pick_targets(sessions: list[dict], unmapped: list[dict], cfg: dict) -> dict:
+    """Choose concrete absolute paths for the commands that take one.
+
+    A bare `.` in a copied command means "wherever your terminal happens to be",
+    which is almost never the project you meant. `map . KEY` run from a home
+    directory silently maps the home directory and starts attributing every
+    unmapped session to that issue. So the picker resolves a real path instead:
+    the project you are working in now, or the best mapping candidate.
+    """
+    here = str(Path.cwd())
+    central = {str(Path(p).resolve()): p for p in (cfg.get("projects") or {})}
+    live = [s["project_root"] for s in sessions if s.get("project_root")]
+
+    def resolves(path: str) -> bool:
+        """Ask the resolver, not the session record. A session freezes its
+        issue_key at SessionStart, so one started before a mapping was added
+        still reads as unmapped -- which would suggest mapping it twice."""
+        try:
+            return bool(worklog.resolve_issue(path, cfg)["issue_key"])
+        except Exception:
+            return False
+
+    def in_central(path: str) -> bool:
+        """unmap only touches the central map. Suggesting a path held by a
+        .jira-project marker would produce `no mapping for ...` and exit 1."""
+        try:
+            return str(Path(path).resolve()) in central
+        except Exception:
+            return False
+
+    unmappable = [p for p in live if not resolves(p)]         + [r["path"] for r in unmapped if not resolves(r["path"])]
+    removable = [p for p in live if in_central(p)] + list(cfg.get("projects") or {})
+
+    return {
+        "map": (unmappable or [here])[0],
+        "unmap": (removable or [here])[0],
+        "resolve": (live or [here])[0],
+    }
+
+
+def command_menu(output: Path | None, targets: dict | None = None) -> list[dict]:
     """Every command worth copying, with real absolute paths so they run from
     any working directory. `danger` marks the ones that write to Jira."""
+    targets = targets or {"map": ".", "unmap": ".", "resolve": "."}
     here = Path(__file__).resolve().parent
     dash, wl, post_py = here / "dashboard.py", here / "worklog.py", here / "post.py"
     target = (output or default_output()).resolve()
@@ -832,12 +873,12 @@ def command_menu(output: Path | None) -> list[dict]:
         {"group": "Look at state", "label": "Verify Jira credentials (read-only)",
          "cmd": f"python {_q(post_py)} check"},
         {"group": "Look at state", "label": "Explain how a folder resolves to an issue",
-         "cmd": f"python {_q(wl)} resolve ."},
+         "cmd": f"python {_q(wl)} resolve {_q(targets['resolve'])}"},
 
         {"group": "Mapping", "label": "Map this folder to an issue",
-         "cmd": f"python {_q(wl)} map . <ISSUE-KEY>"},
+         "cmd": f"python {_q(wl)} map {_q(targets['map'])} <ISSUE-KEY>"},
         {"group": "Mapping", "label": "Stop tracking a folder",
-         "cmd": f"python {_q(wl)} unmap ."},
+         "cmd": f"python {_q(wl)} unmap {_q(targets['unmap'])}"},
 
         {"group": "Posting", "label": "Preview exactly what would be sent",
          "cmd": f"python {_q(post_py)} run --dry-run"},

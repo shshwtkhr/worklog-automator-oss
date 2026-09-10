@@ -112,7 +112,12 @@ python worklog.py resolve C:\Projects\example-app
 
 ### 4. Restart Claude Code
 
-Hooks are read at startup. Until you restart, nothing is being recorded.
+Hooks are read at startup, so until you restart, nothing is being recorded.
+
+**This is the only time you need to restart.** Mapping a project later takes
+effect straight away: `map` tells any session already running in that folder
+about the new issue, and if you map it after the fact, the session still
+re-checks when it ends. Time you worked before the mapping existed is not lost.
 
 ---
 
@@ -340,7 +345,8 @@ python post.py run --force
 In order:
 
 1. `python worklog.py doctor` — are the hooks installed?
-2. Did you restart Claude Code after installing them?
+2. Did you restart Claude Code after installing the hooks? (Only ever needed
+   once, after `install` — not after mapping a project.)
 3. `python worklog.py resolve <the folder>` — does it find a ticket?
 4. Was the session longer than 30 seconds?
 

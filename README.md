@@ -89,7 +89,7 @@ The token comes from
 `Set-Content -Encoding utf8` adds one, and the result reports as *missing
 credentials* rather than as a malformed file.
 
-Map each project, then restart Claude Code:
+Map each project:
 
 ```bash
 python worklog.py map C:\Projects\example-app PROJ-22 userx/example-app
@@ -98,6 +98,11 @@ python post.py check                # verifies credentials, read-only
 ```
 
 That is the whole setup. Work normally.
+
+**Restarting is only needed once**, after `install`, because Claude Code reads
+hooks at startup. Mapping a project takes effect immediately — `map` hands the
+new key to any session already running in that directory, and a session end
+re-resolves anyway, so time worked before the mapping existed is not lost.
 
 ---
 
@@ -266,9 +271,9 @@ Four suites, no third-party runner, no network, no Jira account.
 `tests/mock_jira.py` is a scriptable stand-in for Jira's REST v3 worklog API.
 
     python tests/test_post.py                 # posting, retry, duplicate adoption (24)
-    python tests/test_worklog.py              # project mapping commands (12)
-    python tests/test_session_lifecycle.py    # what each session end does to the clock (8)
-    python tests/test_dashboard.py            # the generated page (6)
+    python tests/test_worklog.py              # project mapping commands (15)
+    python tests/test_session_lifecycle.py    # what each session end does to the clock (10)
+    python tests/test_dashboard.py            # the generated page (9)
 
 Pass a substring to filter: `python tests/test_post.py 429`.
 

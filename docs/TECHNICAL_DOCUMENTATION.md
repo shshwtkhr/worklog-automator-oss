@@ -162,6 +162,25 @@ Two consequences worth knowing:
 - The walk goes **up**, so a marker at a parent directory captures every project
   beneath it.
 
+### A mapping added mid-session
+
+A session record stores its issue key **once**, in `start_session`. Nothing
+between then and `SessionEnd` re-reads it, so for a long time the advice for a
+newly mapped project was "restart Claude Code". Nothing needed restarting; the
+record just needed asking again.
+
+Two places now do that:
+
+- **`cmd_map` calls `adopt_live_sessions()`** after saving, so a running session
+  in that directory picks the key up immediately and says so on stdout.
+- **`finalize_record` re-resolves when the key is still empty**, as a safety net
+  for a config edited by hand or by another process. Without it, real work lands
+  in `unmapped.jsonl` because the mapping arrived an hour too late.
+
+Both only touch sessions that are **currently unresolved**. Re-attributing a
+session that already has a key would silently move hours between issues, so a
+mapping change is never retroactive for time already attributed.
+
 ### GitHub context
 
 `collect_git_context()` runs at session start and end only, with 2-second
@@ -394,6 +413,28 @@ gesture and a permitted context, and neither is guaranteed on `file://` — so a
 failed copy selects the text and says to press Ctrl-C rather than reporting a
 dead end.
 
+**The picker's paths are resolved, never `.`** (`pick_targets()`). A bare dot in
+a copied command means "wherever your terminal happens to be", which is almost
+never the project intended — `map . KEY` run from a home directory silently maps
+the home directory and starts attributing every unmapped session to that issue.
+That happened once.
+
+Choosing a target is less obvious than it looks, and two wrong answers were
+shipped and fixed before this landed:
+
+- **Ask the resolver, not the session record.** A session freezes its
+  `issue_key` at `SessionStart`, so one begun before a mapping existed still
+  reads as unmapped — offering to map a directory that is already mapped.
+- **`unmap` only edits `config.json`.** Offering a path held by a
+  `.jira-project` marker produces `no mapping for ...` and exit 1, so
+  `pick_targets` filters to paths actually in the central map.
+
+`map` therefore offers a live session's directory that currently resolves to
+nothing, else the largest unmapped directory on record; `unmap` offers a live
+session's directory that is in the central map, else any mapping; `resolve`
+offers whatever project is in front of you. Each falls back to the generation
+directory, never to a dot.
+
 **The refresh command is per-file.** `collect()` takes the output path so the
 command it embeds includes `--output` whenever the page is not the default one.
 Without that it printed a bare `python dashboard.py`, which rewrites the default
@@ -455,9 +496,9 @@ normally otherwise.
 | Suite | Covers |
 |---|---|
 | `tests/test_post.py` | 24 cases against `tests/mock_jira.py` |
-| `tests/test_worklog.py` | 12 cases for `map` / `unmap` |
-| `tests/test_session_lifecycle.py` | 8 cases pinning what each session-end route does to the clock |
-| `tests/test_dashboard.py` | 6 cases for the generated page |
+| `tests/test_worklog.py` | 15 cases for `map` / `unmap` |
+| `tests/test_session_lifecycle.py` | 10 cases pinning what each session-end route does to the clock |
+| `tests/test_dashboard.py` | 9 cases for the generated page |
 | `tests/mock_jira.py` | A scriptable REST v3 stand-in |
 
 The mock re-reads its scenario file on **every** request, so a case can change

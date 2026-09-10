@@ -139,6 +139,75 @@ def test_default_output_keeps_the_short_command(h: Harness):
 
 
 @case
+def test_command_picker_never_emits_a_bare_dot(h: Harness):
+    """`map . KEY` copied out of the page means "wherever your terminal happens
+    to be". Run from a home directory it silently maps the home directory and
+    starts attributing every unmapped session to that issue. That happened."""
+    h.seed()
+    proj = h.tmp / "projects" / "needs-mapping"
+    proj.mkdir(parents=True)
+    (self_state := h.state / "unmapped.jsonl").write_text(json.dumps({
+        "cwd": str(proj), "project_root": str(proj), "active_seconds": 900.0,
+        "started": worklog.now().isoformat(), "ended": worklog.now().isoformat(),
+        "session_id": "u1", "reason": "clear", "hint": "map it",
+    }) + chr(10), encoding="utf-8")
+    assert self_state.exists()
+
+    page = h.tmp / "p" / "index.html"
+    h.run("--output", str(page))
+    cmds = {c["label"]: c["cmd"] for c in h.payload(page)["commands"]}
+
+    for label, cmd in cmds.items():
+        parts = cmd.split()
+        expect(" ." not in cmd or not cmd.rstrip().endswith(" ."),
+               f"{label!r} ends in a bare dot: {cmd!r}")
+
+    mapcmd = next(c for k, c in cmds.items() if " map " in c)
+    target = mapcmd.split(" map ")[1].rsplit(" ", 1)[0].strip('"')
+    expect_eq(target, str(proj.resolve()),
+              "map should target a directory that actually needs mapping")
+    expect("<ISSUE-KEY>" in mapcmd, "the key stays a placeholder -- only the path is known")
+
+
+@case
+def test_map_target_is_genuinely_unmapped(h: Harness):
+    """A session records its issue_key at SessionStart, so one begun before a
+    mapping existed still reads as unmapped. Trusting that record would suggest
+    mapping a directory that is already mapped."""
+    import dashboard as dash
+    proj = h.tmp / "projects" / "already-mapped"
+    proj.mkdir(parents=True)
+    # dashboard.py only ever reads config; build one rather than expecting a file
+    cfg = {"projects": {str(proj.resolve()): {"issue_key": "PROJ-9"}},
+           "idle_timeout_minutes": 15, "round_to_minutes": 5, "minimum_minutes": 5,
+           "stale_session_hours": 12, "capture_git_context": True}
+
+    stale_session = [{"project_root": str(proj), "issue_key": None}]   # frozen as unmapped
+    targets = dash.pick_targets(stale_session, [], cfg)
+    expect(targets["map"] != str(proj),
+           "must not offer to map a directory the resolver already maps")
+    expect_eq(targets["unmap"], str(proj.resolve()),
+              "but it is exactly what unmap should offer")
+
+
+@case
+def test_unmap_target_is_in_the_central_map(h: Harness):
+    """unmap only edits config.json. Offering a path held by a .jira-project
+    marker would print `no mapping for ...` and exit 1."""
+    import dashboard as dash
+    marker_only = h.tmp / "projects" / "marker-only"
+    marker_only.mkdir(parents=True)
+    (marker_only / ".jira-project").write_text("PROJ-7" + chr(10), encoding="utf-8")
+    cfg = {"projects": {}, "idle_timeout_minutes": 15, "round_to_minutes": 5,
+           "minimum_minutes": 5, "stale_session_hours": 12, "capture_git_context": True}
+
+    targets = dash.pick_targets(
+        [{"project_root": str(marker_only), "issue_key": "PROJ-7"}], [], cfg)
+    expect(targets["unmap"] != str(marker_only),
+           "a marker-mapped path is not something unmap can remove")
+
+
+@case
 def test_page_is_self_contained(h: Harness):
     """No server, no CDN: it has to work offline from a file:// URL."""
     h.seed()
